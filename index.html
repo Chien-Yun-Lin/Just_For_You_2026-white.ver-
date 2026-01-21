@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Lab Controller - Resonance Series</title>
+<style>
+:root{--panel:#ffffff;--primary:#2c3e50;--success:#27ae60;--error:#e74c3c;--ch1:#3498db;--ch2:#2ecc71;}
+body{background:#e9ecef;color:var(--primary);font-family:Consolas,Monaco,monospace;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;touch-action:manipulation;}
+#lab-device{background:var(--panel);width:100%;max-width:480px;border:3px solid var(--primary);border-radius:8px;box-shadow:15px 15px 40px rgba(0,0,0,.1);display:flex;flex-direction:column;overflow:hidden;}
+.header{background:var(--primary);color:#fff;padding:12px;font-size:11px;display:flex;justify-content:space-between;}
+.progress-bar{height:5px;background:#eee;}
+#progress-fill{height:100%;width:0%;background:var(--success);transition:.5s}
+.stage{display:none;padding:25px;min-height:520px;flex-direction:column;}
+.active-stage{display:flex}
+.gate-grid{display:grid;gap:12px;margin:20px 0}
+.switch-node{border:2px solid var(--primary);padding:15px;border-radius:8px;text-align:center;cursor:pointer;font-weight:bold;transition:0.2s;}
+.switch-node.on{background:var(--primary);color:#fff}
+.scope-screen{background:#000;height:220px;border:4px solid #333;border-radius:4px;position:relative;margin-bottom:15px;}
+canvas{width:100%;height:100%;display:block;}
+.tuning-group{display:flex;align-items:center;gap:12px;margin:15px 0;}
+input[type=range]{flex-grow:1;height:40px;accent-color:var(--primary);cursor:pointer;}
+.step-btn{width:50px;height:50px;border:2px solid var(--primary);background:#fff;color:var(--primary);font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;border-radius:4px;font-weight:bold;}
+.btn-next{width:100%;padding:16px;border:none;background:#ccc;color:#fff;font-weight:bold;border-radius:4px;margin-top:auto;cursor:pointer;transition:background 0.3s;}
+.btn-next.ready{background:var(--success) !important;}
+.cert{border:2px solid var(--primary);padding:18px;margin:20px auto;max-width:360px;background:#fafafa;font-size:11px;line-height:1.6;}
+.cert h4{margin:0 0 10px 0;text-align:center;font-size:12px;}
+.row{display:flex;justify-content:space-between;margin:2px 0;}
+.label{color:#666;}.value{font-weight:bold;}
+.stamp{border:4px solid var(--success);color:var(--success);width:150px;padding:10px;margin:10px auto;font-weight:bold;transform:rotate(-10deg);text-align:center;}
+</style>
+</head>
+<body>
+<div id="lab-device">
+<div class="header">
+<span>CORE_OS: RESONANCE_V20.07-LTS</span>
+<span id="step-tag">INITIALIZING</span>
+</div>
+<div class="progress-bar"><div id="progress-fill"></div></div>
+
+<div id="stage1" class="stage active-stage">
+<h3>[01] System Startup Interlock Check</h3>
+<p style="font-size:12px;color:#666">確認系統啟動條件是否滿足。所有輸入訊號須符合非冗餘狀態。</p>
+<p style="font-size:11px;color:#999">Enable Condition: Q = (A ⊕ B) ∧ C</p>
+<div class="gate-grid">
+<div id="swA" class="switch-node" onclick="toggleSW('A')">INPUT A (Logic 0)</div>
+<div id="swB" class="switch-node" onclick="toggleSW('B')">INPUT B (Logic 0)</div>
+<div id="swC" class="switch-node" onclick="toggleSW('C')">INPUT C (Logic 0)</div>
+</div>
+<div style="text-align:center;flex-grow:1">
+<div id="logic-led" style="width:25px;height:25px;background:#bbb;border-radius:50%;margin:0 auto;border:1px solid #555;"></div>
+<p id="logic-status" style="font-size:11px;color:#888;white-space:pre-line">STATUS: Interlock Open
+Enable condition not satisfied.
+</p>
+</div>
+<button id="btn1" class="btn-next" onclick="goStage(2)" disabled>Proceed</button>
+</div>
+
+<div id="stage2" class="stage">
+<h3>[02] Phase-Locked Synchronization</h3>
+<p style="font-size:11px;color:#666">請調整受控振盪器，使其與參考源達成相位鎖定。</p>
+<div class="scope-screen">
+<canvas id="scopeCanvas" width="400" height="220"></canvas>
+<span style="position:absolute;top:10px;left:10px;font-size:9px;color:var(--ch1);background:rgba(0,0,0,0.6);padding:2px 4px;">CH1: Reference</span>
+<span style="position:absolute;top:115px;left:10px;font-size:9px;color:var(--ch2);background:rgba(0,0,0,0.6);padding:2px 4px;">CH2: VCO (<span id="vco-display">1.00</span>)</span>
+<div id="match-pct" style="position:absolute;bottom:8px;right:10px;color:#0f0;font-size:10px;font-weight:bold;">SYNC STATUS: ACQUIRING</div>
+</div>
+<div class="tuning-group">
+    <button class="step-btn" onclick="stepUpdate(-0.01)">-</button>
+    <input type="range" id="f-range" min="0" max="10" step="0.01" value="1.00" oninput="updateScope()">
+    <button class="step-btn" onclick="stepUpdate(0.01)">+</button>
+</div>
+<button id="btn2" class="btn-next" onclick="goStage(3)" disabled>Lock Reference</button>
+</div>
+
+<div id="stage3" class="stage">
+<h3>[03] Session Authentication</h3>
+<p style="font-size:12px;color:#666;text-align:center">輸入預共享金鑰以初始化連線。</p>
+<div style="padding:0 30px; margin-top:20px;">
+    <input id="key-input" type="password" maxlength="4" style="width:100%;font-size:32px;text-align:center;letter-spacing:12px;border:2px solid var(--primary);">
+</div>
+<button class="btn-next ready" onclick="verifyKey()">Authorize</button>
+</div>
+
+<div id="final-report" class="stage">
+<h2 style="text-align:center">SYSTEM STATUS REPORT</h2>
+<pre style="text-align:left;font-size:12px;background:#f4f4f4;padding:15px;border-left:4px solid var(--success);line-height:1.7;">
+Startup Interlock:   Passed
+Synchronization:     Phase-Locked
+Frequency Drift:     Steady-State (Within Tolerance)
+Phase Stability:     Deterministic
+Error Rate:          Negligible
+
+Operating Mode: Continuous Persistence (Long-Term Stable)
+[系統狀態：參考源穩定，諧振效率最大化，進入下一年度運行週期。]
+</pre>
+<div class="cert">
+    <h4>SYSTEM CERTIFICATION RECORD</h4>
+    <p>此系統已通過所有核心層級驗證。某些聯繫就像基礎物理常數，不隨條件改變。</p>
+    <p style="font-weight:bold; color:var(--success); text-align:center; margin-top:10px;">Happy Birthday.</p>
+    <hr style="margin:12px 0; border:0; border-top:1px solid #ccc;">
+    <div class="row"><span class="label">System ID</span><span class="value">RESONANCE–CORE–2007</span></div>
+    <div class="row"><span class="label">Status</span><span class="value">CERTIFIED</span></div>
+    <div class="row"><span class="label">Recorded On</span><span class="value">2026-03-26</span></div>
+</div>
+<div class="stamp">CERTIFIED</div>
+</div>
+</div>
+
+<script>
+let sw = {A:false, B:false, C:false};
+const canvas = document.getElementById("scopeCanvas");
+const ctx = canvas.getContext("2d");
+let anim = null;
+
+function goStage(n){
+ document.querySelectorAll(".stage").forEach(s=>s.classList.remove("active-stage"));
+ const t = typeof n==="number" ? document.getElementById("stage"+n) : n;
+ t.classList.add("active-stage");
+ document.getElementById("step-tag").innerText = typeof n==="number" ? `STAGE ${n}/3` : "SYSTEM STABLE";
+ document.getElementById("progress-fill").style.width = typeof n==="number" ? n*33.3+"%" : "100%";
+ if(n===2) draw(); else cancelAnimationFrame(anim);
+}
+
+function toggleSW(id){
+ sw[id] = !sw[id];
+ const el = document.getElementById("sw"+id);
+ el.classList.toggle("on");
+ el.innerText = `INPUT ${id} (Logic ${sw[id]?1:0})`;
+ const ok = (sw.A !== sw.B) && sw.C;
+ document.getElementById("logic-led").style.background = ok ? "#27ae60" : "#bbb";
+ document.getElementById("logic-status").innerText = ok
+  ? "STATUS: Interlock Closed\nSystem startup permitted."
+  : "STATUS: Interlock Open\nAwaiting valid enable condition.";
+
+ document.getElementById("btn1").disabled = !ok;
+ document.getElementById("btn1").classList.toggle("ready", ok);
+}
+
+function stepUpdate(val){
+ const el = document.getElementById("f-range");
+ el.value = Math.max(0, Math.min(10, parseFloat(el.value) + val)).toFixed(2);
+ updateScope();
+}
+
+function updateScope(){
+ const f = parseFloat(document.getElementById("f-range").value);
+ document.getElementById("vco-display").innerText = f.toFixed(2);
+ const ok = (f.toFixed(2) === "3.26");
+ const b2 = document.getElementById("btn2");
+ b2.disabled = !ok;
+ b2.classList.toggle("ready", ok);
+ document.getElementById("match-pct").innerText = ok ? "SYNC STATUS: PHASE-LOCKED" : "SYNC STATUS: ACQUIRING";
+}
+
+function draw(){
+ if(!document.getElementById("stage2").classList.contains("active-stage")) return;
+ ctx.fillStyle = "#000"; ctx.fillRect(0,0,400,220);
+ const t = Date.now()*0.005;
+ const f_val = parseFloat(document.getElementById("f-range").value);
+ ctx.strokeStyle = "#3498db"; ctx.lineWidth = 2; ctx.beginPath();
+ for(let x=0; x<400; x+=2){
+  const y = 55 + Math.sin(x*0.1 + t) * 20;
+  if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+ }
+ ctx.stroke();
+ const ok = (f_val.toFixed(2) === "3.26");
+ ctx.strokeStyle = ok ? "#2ecc71" : "#444"; ctx.lineWidth = ok ? 3 : 2; ctx.beginPath();
+ for(let x=0; x<400; x+=2){
+  const y = 165 + Math.sin(x*(f_val/25) + t) * 20;
+  if(x===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+ }
+ ctx.stroke();
+ anim = requestAnimationFrame(draw);
+}
+
+function verifyKey(){
+ if(document.getElementById("key-input").value === "1209"){
+  goStage(document.getElementById("final-report"));
+ }
+}
+</script>
+</body>
+</html>
